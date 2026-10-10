@@ -2,7 +2,7 @@
 from collections import Counter
 from typing import Callable
 
-from .almacen import Dominios, ahora, es_handle_publico, handle_linkedin
+from .almacen import Dominios, ahora, es_handle_publico, handle_linkedin, norm_empresa
 from .hunter import ClaveInvalida, EmailReclamado, Hunter, HunterError, SinCreditos
 from .nombres import candidatos
 from .prospeo import Prospeo
@@ -11,9 +11,40 @@ from .prospeo import Prospeo
 FINALES = {"encontrado", "no_encontrado", "nombre_incompleto", "sin_empresa", "excluido_451"}
 
 
+# TLD que no levantan sospecha para contactos en España; otro código de país (.cz, .at, .br...) sí.
+_TLD_NORMALES = {"com", "es", "cat", "eu", "net", "org", "info", "io", "co", "group", "global", "biz"}
+
+
+def motivo_dudoso(lead: dict) -> str:
+    """Detecta emails cuyo dominio probablemente no es el de la empresa ('' si parece correcto).
+
+    Hunter, cuando busca por nombre de empresa, a veces elige una filial de otro país
+    (culligan.cz) o una empresa distinta (meetproducerx.com para Mandarin Oriental).
+    """
+    email, estado = lead.get("email", ""), lead.get("email_estado", "")
+    if not email or "@" not in email:
+        return ""
+    dominio = email.split("@", 1)[1].lower()
+    partes = dominio.split(".")
+    tld, base = partes[-1], "".join(partes[:-1]).replace("-", "")
+    palabras = [p for p in norm_empresa(lead.get("empresa", "")).split() if len(p) >= 3]
+    coincide = any(p in base or base in p for p in palabras) if palabras else True
+    if tld not in _TLD_NORMALES and estado != "valid":
+        return f"Revisar: dominio de otro país (.{tld})"
+    if not coincide and estado != "valid":
+        return f"Revisar: el dominio {dominio} no se parece a {lead.get('empresa', '')}"
+    score = lead.get("email_score", "")
+    if score.isdigit() and int(score) < 60:
+        return f"Revisar: confianza baja ({score})"
+    return ""
+
+
 def _encontrado(lead: dict, email: str, fuente: str, score="", estado="") -> str:
     lead.update(email=email, email_fuente=fuente, email_score=str(score or ""),
                 email_estado=estado or "", resultado_email="encontrado", fecha_email=ahora())
+    motivo = motivo_dudoso(lead)
+    if motivo:
+        lead.update(validacion="Revisar", nota=f"{lead.get('nota', '')} | {motivo}".strip(" |"))
     return "encontrado"
 
 
@@ -119,6 +150,7 @@ def pendientes(leads: list[dict], busqueda: str | None = None, reintentar: bool 
 def enriquecer(leads: list[dict], *, hunter: Hunter | None, prospeo: Prospeo | None,
                dominios: Dominios, busqueda: str | None = None, limite: int | None = None,
                verificar: bool = False, reintentar: bool = False,
+               max_encontrados: int | None = None,
                guardar: Callable[[], None] = lambda: None,
                log: Callable[[str], None] = print) -> Counter:
     cola = pendientes(leads, busqueda, reintentar)
@@ -128,6 +160,9 @@ def enriquecer(leads: list[dict], *, hunter: Hunter | None, prospeo: Prospeo | N
     log(f"Leads a procesar: {len(cola)}")
     try:
         for i, lead in enumerate(cola, 1):
+            if max_encontrados is not None and stats["encontrado"] >= max_encontrados:
+                log(f"Tope de {max_encontrados} emails encontrados (= créditos) alcanzado.")
+                break
             try:
                 resultado = buscar_email_lead(lead, hunter, prospeo, dominios)
                 if resultado == "encontrado" and verificar and hunter and lead.get("email_estado") != "valid":

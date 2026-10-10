@@ -77,7 +77,8 @@ def cmd_emails(a):
     try:
         stats = enriquecer(leads, hunter=hunter, prospeo=prospeo, dominios=dominios,
                            busqueda=a.busqueda, limite=a.limite, verificar=a.verificar,
-                           reintentar=a.reintentar, guardar=lambda: almacen.guardar_leads(leads))
+                           reintentar=a.reintentar, max_encontrados=a.max_creditos,
+                           guardar=lambda: almacen.guardar_leads(leads))
     except SinCreditos as e:
         almacen.guardar_leads(leads)
         sys.exit(f"Sin créditos: {e}. Lo procesado está guardado.")
@@ -180,6 +181,8 @@ def main(argv=None):
     s.add_argument("--limite", type=int)
     s.add_argument("--verificar", action="store_true", help="verificar con Hunter los que no salgan 'valid'")
     s.add_argument("--reintentar", action="store_true", help="volver a buscar los 'no_encontrado'")
+    s.add_argument("--max-creditos", type=int,
+                   help="parar al encontrar N emails (Hunter cobra 1 búsqueda por email encontrado)")
     s.add_argument("--sin-prospeo", action="store_true")
     s.add_argument("--simular", action="store_true", help="listar sin llamar a la API")
     s.set_defaults(f=cmd_emails)

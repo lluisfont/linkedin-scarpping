@@ -135,6 +135,17 @@ class TestEmails(unittest.TestCase):
         self.assertEqual(s.llamadas[1][1].get("domain"), "acme.com")
         self.assertEqual(self.dominios.get("ACME SL"), "acme.com")
 
+    def test_motivo_dudoso(self):
+        from prospector.emails import motivo_dudoso
+        base = {"email_estado": "accept_all", "email_score": "83"}
+        self.assertIn("otro país", motivo_dudoso({**base, "email": "a@culligan.cz", "empresa": "Culligan International"}))
+        self.assertIn("no se parece", motivo_dudoso({**base, "email": "s@meetproducerx.com",
+                                                     "empresa": "Mandarin Oriental Hotel Group"}))
+        self.assertEqual(motivo_dudoso({**base, "email": "t@thegbfoods.com", "empresa": "GBfoods"}), "")
+        # un dominio raro pero verificado como 'valid' no se marca
+        self.assertEqual(motivo_dudoso({"email": "b@fhp-ww.com", "email_estado": "valid", "email_score": "90",
+                                        "empresa": "Freudenberg Home & Cleaning Solucions"}), "")
+
     def test_451_excluye(self):
         hunter, _ = _hunter(lambda u, p: Resp(451, {"errors": [{"id": "claimed_email"}]}))
         lead = self._lead("Laura Martí")

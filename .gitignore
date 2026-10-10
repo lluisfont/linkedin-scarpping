@@ -1,0 +1,6 @@
+.env
+data/
+salida/
+__pycache__/
+*.pyc
+~$*.xlsx

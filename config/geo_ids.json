@@ -1,0 +1,4 @@
+{
+  "_nota": "Ids de región de Sales Navigator ya resueltos. Formato: \"Zona\": {\"id\": \"NNN\", \"text\": \"texto exacto del filtro\"}",
+  "Barcelona": {"id": "107025191", "text": "Barcelona, Catalonia, Spain"}
+}

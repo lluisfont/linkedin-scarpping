@@ -15,7 +15,8 @@ COLUMNAS = [  # (cabecera, campo, ancho)
     ("LinkedIn", "url_linkedin", 42), ("Sales Navigator", "url_salesnav", 20),
     ("Tiempo en puesto", "tiempo_puesto", 16), ("Búsqueda", "busqueda", 22),
     ("Fecha alta", "fecha_alta", 16), ("Resultado email", "resultado_email", 16),
-    ("Validación", "validacion", 12), ("Nota", "nota", 30),
+    ("Validación", "validacion", 12), ("Nota", "nota", 40),
+    ("Email descartado (no es de la empresa actual)", "email_descartado", 34),
 ]
 COLORES_ESTADO = {
     "valid": "C6EFCE", "accept_all": "FFEB9C", "webmail": "FFEB9C",
@@ -75,6 +76,7 @@ def exportar(leads: list[dict], busquedas: list[dict], ruta: Path) -> Path:
     rs.append(["Leads", total])
     rs.append(["Con email", con_email])
     rs.append(["% con email", f"{(100 * con_email / total):.0f}%" if total else "-"])
+    rs.append(["Emails descartados (dominio de otra empresa)", sum(1 for l in leads if l.get("email_descartado"))])
     rs.append([])
     rs.append(["Estado del email", "Leads"])
     for estado, n in Counter(l.get("email_estado") or "(sin email)" for l in leads).most_common():

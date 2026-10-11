@@ -135,16 +135,46 @@ class TestEmails(unittest.TestCase):
         self.assertEqual(s.llamadas[1][1].get("domain"), "acme.com")
         self.assertEqual(self.dominios.get("ACME SL"), "acme.com")
 
-    def test_motivo_dudoso(self):
-        from prospector.emails import motivo_dudoso
-        base = {"email_estado": "accept_all", "email_score": "83"}
-        self.assertIn("otro país", motivo_dudoso({**base, "email": "a@culligan.cz", "empresa": "Culligan International"}))
-        self.assertIn("no se parece", motivo_dudoso({**base, "email": "s@meetproducerx.com",
-                                                     "empresa": "Mandarin Oriental Hotel Group"}))
-        self.assertEqual(motivo_dudoso({**base, "email": "t@thegbfoods.com", "empresa": "GBfoods"}), "")
-        # un dominio raro pero verificado como 'valid' no se marca
-        self.assertEqual(motivo_dudoso({"email": "b@fhp-ww.com", "email_estado": "valid", "email_score": "90",
-                                        "empresa": "Freudenberg Home & Cleaning Solucions"}), "")
+    def test_regla_empresa_actual(self):
+        from prospector.emails import motivo_rechazo
+        # caso Villalonga: buzón 'valid' de la empresa ANTERIOR -> rechazado siempre
+        self.assertIn("empresa actual", motivo_rechazo("jv@lacaixa.es", "Longtown HR"))
+        self.assertIn("empresa actual", motivo_rechazo("s@meetproducerx.com", "Mandarin Oriental Hotel Group"))
+        self.assertIn("otro país", motivo_rechazo("a@culligan.cz", "Culligan International"))
+        self.assertIn("personal", motivo_rechazo("a@icab.cat", "Sanofi"))
+        self.assertIn("sin empresa", motivo_rechazo("a@acme.com", ""))
+        self.assertEqual(motivo_rechazo("t@thegbfoods.com", "GBfoods"), "")
+        # siglas
+        for email, empresa in (("a@pg.com", "Procter & Gamble"), ("b@db.com", "Deutsche Bank SAE"),
+                               ("c@fbg.ub.es", "Fundació Bosch i Gimpera"), ("e@df-sa.es", "DF Electric, S.A."),
+                               ("d@barcelona.msf.org", "Médicos Sin Fronteras España")):
+            self.assertEqual(motivo_rechazo(email, empresa), "", email)
+        # un dominio distinto al nombre solo vale si está verificado (página de la empresa en LinkedIn)
+        empresa = "Freudenberg Home & Cleaning Solucions"
+        self.assertNotEqual(motivo_rechazo("b@fhp-ww.com", empresa), "")
+        self.assertEqual(motivo_rechazo("b@fhp-ww.com", empresa, ["fhp-ww.com"]), "")
+
+    def test_email_de_otra_empresa_se_descarta(self):
+        hunter, s = _hunter(lambda u, p: Resp(200, {"data": {
+            "email": "silvia@meetproducerx.com", "score": 83, "domain": "meetproducerx.com",
+            "verification": {"status": "valid"}}}))
+        lead = self._lead("Sílvia Forés Sabater", "Mandarin Oriental Hotel Group")
+        self.assertEqual(buscar_email_lead(lead, hunter, None, self.dominios), "descartado")
+        self.assertEqual(lead["email"], "")
+        self.assertEqual(lead["email_descartado"], "silvia@meetproducerx.com")
+        self.assertIn("Descartado:", lead["nota"])
+        # el dominio equivocado no se aprende para otros contactos de la empresa
+        self.assertEqual(self.dominios.get("Mandarin Oriental Hotel Group"), "")
+        self.assertEqual(len(s.llamadas), 1)  # no insiste con otras variantes del nombre
+
+    def test_dominio_verificado_tiene_prioridad(self):
+        self.dominios.set("Acme S.L.", "acme-group.com", verificado=True)
+        self.dominios.set("Acme S.L.", "acme.cz")  # una propuesta de Hunter no pisa el verificado
+        hunter, s = _hunter(lambda u, p: Resp(200, {"data": {"email": "laura.marti@acme-group.com",
+                                                             "verification": {"status": "valid"}}}))
+        lead = self._lead("Laura Martí")
+        self.assertEqual(buscar_email_lead(lead, hunter, None, self.dominios), "encontrado")
+        self.assertEqual(s.llamadas[0][1].get("domain"), "acme-group.com")
 
     def test_451_excluye(self):
         hunter, _ = _hunter(lambda u, p: Resp(451, {"errors": [{"id": "claimed_email"}]}))

@@ -62,19 +62,31 @@ Juntar los `leads` del lote en `data/raw/<etiqueta>_perfiles_<n>.json` con la fo
 
 ## Emails (Hunter → Prospeo)
 
-1. `python -m prospector emails --busqueda <etiqueta> --simular` → ver cuántos se consultarán. Si superan los
-   créditos disponibles de Hunter, avisar y usar `--limite`.
-2. `python -m prospector emails --busqueda <etiqueta>` (añadir `--verificar` si el usuario quiere verificación;
-   gasta créditos de verificación). Hunter prueba varias combinaciones de nombre/apellido (no cobra si no
-   encuentra); si falla y hay `PROSPEO_API_KEY`, prueba Prospeo.
-3. **Mejorar aciertos con el dominio** (si quedan `no_encontrado`). Hunter, buscando por nombre de empresa,
-   a veces elige un dominio equivocado (p. ej. `seatbus.org` para SEAT, `.com.br` para Boehringer): revisar los
-   dominios de los no encontrados. Si la web de LinkedIn es la del grupo (Leroy Merlin → adeo.com), usar el
-   dominio del país (`leroymerlin.es`). En la prueba inicial esto subió de 13/20 a 18/20.
-   - `python -m prospector sin-dominio --busqueda <etiqueta>` → lista de empresas con `empresa_id`.
-   - Para cada una (lotes de 6): navigate `https://www.linkedin.com/company/<empresa_id>/about/` → wait →
-     `javascript_tool` con `navegador/extractor_web_empresa.js` → `python -m prospector dominio "<Empresa>" <web>`.
-   - `python -m prospector emails --busqueda <etiqueta> --reintentar`
+**REGLA INNEGOCIABLE: la empresa actual de LinkedIn es la única válida.** Un email solo se entrega si su
+dominio es el de esa empresa. Un buzón `valid` de una empresa anterior (p. ej. `jvillalonga@lacaixa.es` de
+alguien que hoy está en Longtown HR) NO es un contacto válido. El código lo impone (`aplicar_regla`): un email
+de otro dominio va a `email_descartado` con el motivo y `email` queda vacío. Nunca saltarse esto a mano.
+
+1. **Primero, dominios verificados en LinkedIn (obligatorio, antes de gastar créditos):**
+   - `python -m prospector sin-dominio --busqueda <etiqueta>` → empresas sin dominio verificado, con `empresa_id`.
+   - Para cada una (lotes de 6, wait 3–4 s entre páginas): navigate
+     `https://www.linkedin.com/company/<empresa_id>/about/` → `computer wait 4` → `javascript_tool` con
+     `navegador/extractor_web_empresa.js` (devuelve solo el dominio) →
+     `python -m prospector dominio "<Empresa tal cual en la base>" <dominio>` (lo marca como verificado).
+   - Si LinkedIn da la web del grupo (Leroy Merlin → adeo.com), usar el dominio del país (`leroymerlin.es`) solo
+     si coincide con el nombre de la empresa; si no, dejar el del LinkedIn.
+   - Empresas sin `empresa_id`: buscar la página de la empresa en LinkedIn por nombre.
+2. `python -m prospector emails --busqueda <etiqueta> --simular` → cuántos se consultarán. Cada email encontrado
+   cuesta 1 crédito (también si luego se descarta). Respetar el tope del usuario con `--max-creditos N`.
+3. `python -m prospector emails --busqueda <etiqueta> [--max-creditos N]` (añadir `--verificar` si se pide;
+   gasta créditos de verificación). Hunter busca en el dominio verificado y prueba variantes del nombre (no cobra
+   si no encuentra); si falla y hay `PROSPEO_API_KEY`, prueba Prospeo.
+4. `python -m prospector revisar` → vuelve a aplicar la regla a toda la base (por ejemplo tras fijar dominios).
+5. Informar de los descartados: un descartado indica que Hunter dio un email de otra empresa.
+
+## Auditar listas externas
+`python -m prospector auditar <archivo.csv|xlsx>` → `salida/auditoria_<archivo>.xlsx` con veredicto por fila
+(APTO / PENDIENTE / NO APTO) según la misma regla. No modifica el original.
 
 ## Excel
 `python -m prospector excel --busqueda <etiqueta>` → `salida/prospectos_<etiqueta>.xlsx`

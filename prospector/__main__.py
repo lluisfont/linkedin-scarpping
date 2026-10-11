@@ -7,6 +7,8 @@
   dominio   "Empresa" empresa.com                          fija el dominio de una empresa
   excel     [--busqueda E] [--salida ruta.xlsx]            genera la hoja Excel
   estado                                                   resumen de la base y créditos
+  revisar                                                  marca emails cuyo dominio no es de la empresa actual
+  auditar   lista.csv|xlsx [--salida ruta.xlsx]            audita una lista externa (copia, no toca el original)
 """
 import argparse
 import json
@@ -16,7 +18,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import almacen, config
-from .emails import enriquecer, pendientes, verificar_lead
+from .emails import aplicar_regla, enriquecer, pendientes, sin_dominio_verificado, verificar_lead
 from .excel import exportar
 from .hunter import ClaveInvalida, Hunter, HunterError, SinCreditos
 from .prospeo import Prospeo
@@ -70,10 +72,15 @@ def cmd_emails(a):
             print(f"- {l['nombre']} · {l.get('empresa', '')} · dominio={l.get('dominio') or '?'}")
         print(f"{len(cola)} leads se consultarían.")
         return
+    dominios = almacen.Dominios()
+    sin_verificar = {l["empresa"] for l in sin_dominio_verificado(cola, dominios)}
+    if sin_verificar:
+        print(f"Aviso: {len(sin_verificar)} empresas sin dominio verificado en LinkedIn "
+              f"(ejecutar antes 'sin-dominio' y fijarlos con 'dominio'). Hunter las buscará por nombre "
+              f"y se descartará cualquier email que no sea de la empresa actual, pero gastará crédito.")
     hunter, prospeo = _proveedores(a.sin_prospeo)
     print(_creditos_hunter(hunter))
     print("Prospeo como respaldo: " + ("sí" if prospeo else "no (sin PROSPEO_API_KEY)"))
-    dominios = almacen.Dominios()
     try:
         stats = enriquecer(leads, hunter=hunter, prospeo=prospeo, dominios=dominios,
                            busqueda=a.busqueda, limite=a.limite, verificar=a.verificar,
@@ -111,29 +118,31 @@ def cmd_verificar(a):
 
 
 def cmd_sin_dominio(a):
+    """Empresas de leads sin email válido cuyo dominio aún no está verificado en LinkedIn."""
     dominios = almacen.Dominios()
     vistas = {}
-    for l in _filtrar(almacen.cargar_leads(), a.busqueda):
-        emp = l.get("empresa")
-        if emp and not l.get("email") and not l.get("dominio") and not dominios.get(emp):
-            vistas.setdefault(almacen.norm_empresa(emp), {"empresa": emp, "empresa_id": l.get("empresa_id", "")})
+    for l in sin_dominio_verificado(almacen.cargar_leads(), dominios, a.busqueda):
+        vistas.setdefault(almacen.norm_empresa(l["empresa"]),
+                          {"empresa": l["empresa"], "empresa_id": l.get("empresa_id", "")})
     print(json.dumps(list(vistas.values()), ensure_ascii=False, indent=1))
 
 
 def cmd_dominio(a):
+    """Fija un dominio VERIFICADO (de la página de la empresa en LinkedIn o comprobado por el usuario)."""
     dominios = almacen.Dominios()
-    dominios.set(a.empresa, a.dominio)
+    dominios.set(a.empresa, a.dominio, verificado=True)
     dominios.guardar()
+    dom = almacen.limpiar_dominio(a.dominio)
     leads = almacen.cargar_leads()
     n = 0
     for l in leads:
         if almacen.norm_empresa(l.get("empresa", "")) == almacen.norm_empresa(a.empresa):
-            l["dominio"] = almacen.limpiar_dominio(a.dominio)
-            if l.get("resultado_email") in ("no_encontrado", "sin_empresa"):
-                l["resultado_email"] = ""  # se volverá a intentar con el dominio nuevo
+            l["dominio"] = dom
+            if l.get("resultado_email") in ("no_encontrado", "sin_empresa", "descartado"):
+                l["resultado_email"] = ""  # se volverá a intentar con el dominio verificado
             n += 1
     almacen.guardar_leads(leads)
-    print(f"{a.empresa} -> {almacen.limpiar_dominio(a.dominio)} ({n} leads actualizados)")
+    print(f"{a.empresa} -> {dom} (verificado; {n} leads actualizados)")
 
 
 def cmd_excel(a):
@@ -144,6 +153,33 @@ def cmd_excel(a):
     final = exportar(leads, busquedas, ruta)
     con_email = sum(1 for l in leads if l.get("email"))
     print(f"Excel: {final} · {len(leads)} leads · {con_email} con email")
+
+
+def cmd_auditar(a):
+    from .auditoria import auditar
+    ruta = Path(a.archivo)
+    salida = Path(a.salida) if a.salida else config.SALIDA / f"auditoria_{ruta.stem}.xlsx"
+    final, stats = auditar(ruta, salida)
+    print(f"Auditoría: {final}")
+    print(" · ".join(f"{v}: {stats[v]}" for v in ("APTO", "PENDIENTE", "NO APTO")))
+
+
+def cmd_revisar(a):
+    """Vuelve a aplicar la regla 'email = empresa actual de LinkedIn' a todos los emails de la base."""
+    dominios = almacen.Dominios()
+    leads = almacen.cargar_leads()
+    stats = Counter()
+    for l in leads:
+        if not l.get("email"):
+            continue
+        resultado = aplicar_regla(l, dominios.verificados(l.get("empresa", "")))
+        stats[resultado] += 1
+        if resultado == "descartado":
+            print(f"DESCARTADO {l['email_descartado']:38} {l['nota'].split('Descartado: ')[-1]}")
+        elif l.get("validacion") == "Revisar":
+            print(f"REVISAR    {l['email']:38} {l['nota']}")
+    almacen.guardar_leads(leads)
+    print(f"{stats['encontrado']} emails aceptados · {stats['descartado']} descartados")
 
 
 def cmd_estado(a):
@@ -208,6 +244,14 @@ def main(argv=None):
 
     s = sub.add_parser("estado")
     s.set_defaults(f=cmd_estado)
+
+    s = sub.add_parser("auditar", help="revisa una lista externa (CSV/XLSX): ¿email de la empresa actual?")
+    s.add_argument("archivo")
+    s.add_argument("--salida")
+    s.set_defaults(f=cmd_auditar)
+
+    s = sub.add_parser("revisar", help="repasa los emails de la base y marca los dudosos")
+    s.set_defaults(f=cmd_revisar)
 
     a = p.parse_args(argv)
     a.f(a)

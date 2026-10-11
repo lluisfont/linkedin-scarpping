@@ -12,7 +12,7 @@ CAMPOS = [
     "id", "nombre", "nombre_pila", "apellidos", "cargo", "empresa", "empresa_id",
     "ubicacion", "tiempo_puesto", "url_linkedin", "url_salesnav", "busqueda",
     "fecha_alta", "dominio", "email", "email_score", "email_estado", "email_fuente",
-    "email_verificado", "resultado_email", "fecha_email", "validacion", "nota",
+    "email_verificado", "resultado_email", "fecha_email", "validacion", "nota", "email_descartado",
 ]
 CAMPOS_BUSQUEDA = ["fecha", "busqueda", "origen", "url", "pagina", "total_resultados",
                    "leads_en_lote", "nuevos"]
@@ -197,22 +197,44 @@ def cargar_busquedas() -> list[dict]:
 # ---------- dominios ----------
 
 class Dominios:
-    """Caché empresa -> dominio en data/dominios.json (editable a mano)."""
+    """Caché empresa -> dominio en data/dominios.json (editable a mano).
+
+    Dos tipos de entrada:
+      "empresa": "dominio.com"                                   -> lo propuso Hunter (NO verificado)
+      "empresa": {"dominio": "x.com", "verificados": ["x.com", "y.com"]}  -> sacado de la página de la
+          empresa en LinkedIn o fijado por el usuario. Solo estos dominios validan un email que no
+          se parezca al nombre de la empresa.
+    """
 
     def __init__(self, ruta: Path = config.DOMINIOS_JSON):
         self.ruta = ruta
         self.datos: dict = json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else {}
 
     def get(self, empresa: str) -> str:
-        return self.datos.get(norm_empresa(empresa), "") if empresa else ""
+        valor = self.datos.get(norm_empresa(empresa), "") if empresa else ""
+        return valor.get("dominio", "") if isinstance(valor, dict) else valor
 
-    def set(self, empresa: str, dominio: str) -> None:
+    def verificados(self, empresa: str) -> list[str]:
+        valor = self.datos.get(norm_empresa(empresa)) if empresa else None
+        return list(valor.get("verificados", [])) if isinstance(valor, dict) else []
+
+    def es_verificado(self, empresa: str) -> bool:
+        return bool(self.verificados(empresa))
+
+    def set(self, empresa: str, dominio: str, verificado: bool = False) -> None:
         clave = norm_empresa(empresa)
-        if clave:
-            self.datos[clave] = limpiar_dominio(dominio)
+        if not clave:
+            return
+        dom = limpiar_dominio(dominio)
+        if verificado:
+            previos = self.verificados(empresa)
+            self.datos[clave] = {"dominio": dom, "verificados": sorted(set(previos + [dom]))}
+        elif not self.es_verificado(empresa):  # una propuesta de Hunter nunca pisa un dominio verificado
+            self.datos[clave] = dom
 
     def borrar(self, empresa: str) -> None:
-        self.datos.pop(norm_empresa(empresa), None)
+        if not self.es_verificado(empresa):
+            self.datos.pop(norm_empresa(empresa), None)
 
     def guardar(self) -> None:
         self.ruta.parent.mkdir(parents=True, exist_ok=True)

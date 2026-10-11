@@ -12,5 +12,7 @@
       .find(x => !/linkedin\.com|lnkd\.in|bing\.com|microsoft\.com|google\./.test(x.href));
     web = a ? a.href : '';
   }
-  JSON.stringify({empresa, web});
+  // Solo el dominio: una URL con ?utm=... hace que la herramienta bloquee la salida.
+  const dominio = (web || '').replace(/^https?:\/\//i, '').split(/[\/?#]/)[0].replace(/^www\./i, '').toLowerCase();
+  JSON.stringify({empresa, dominio});
 }

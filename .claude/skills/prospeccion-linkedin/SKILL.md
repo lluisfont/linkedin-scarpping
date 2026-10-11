@@ -22,7 +22,10 @@ Método de navegación completo y sus problemas conocidos: `docs/metodo_navegaci
    `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__browser_batch,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__find`
 2. `python -m prospector estado` → comprueba la clave de Hunter y los créditos. Si falta `HUNTER_API_KEY`,
    pedir al usuario que la ponga en `.env` (no pedir que la pegue en el chat).
-3. Elegir una **etiqueta** corta para la búsqueda (`rrhh-bcn-1000`). Se usa en archivos, en la base y en el Excel.
+3. Elegir una **etiqueta** con la forma `<segmento>-<zona>-<detalle>`: `rrhh-bcn-1000`, `ceo-madrid-500`,
+   `cfo-valencia`. El prefijo es el **segmento** (RRHH, CEO, CFO...). Todo va a la **misma base de contactos**
+   (`data/contactos.db`): una persona es una sola ficha aunque salga en búsquedas de distintos segmentos, y si ya
+   tiene email no se vuelve a pagar en Hunter.
 
 ## Modo A — Búsqueda de un conjunto de profesionales (Sales Navigator)
 
@@ -44,7 +47,9 @@ Método de navegación completo y sus problemas conocidos: `docs/metodo_navegaci
    - Si `leads` < `tarjetas` − 3, hacer otra pasada de scroll (arriba y abajo) y repetir el paso 3.
    - Pegar las líneas de los trozos con Write en `data/raw/<etiqueta>_p<N>.txt` (cabecera opcional
      `# pagina: N` y `# total: X`). Descartar ahí los que claramente no encajan con lo pedido.
-   - `python -m prospector importar data/raw/<etiqueta>_p<N>.txt --busqueda <etiqueta>`
+   - `python -m prospector importar data/raw/<etiqueta>_p<N>.txt --busqueda <etiqueta>` → informa de cuántos son
+     nuevos y cuáles **ya estaban en la base** (de qué segmento y si ya tienen email). Decir al usuario cuántos
+     nuevos aporta cada página; si una página trae casi todo conocido, proponer afinar filtros o pasar a otra.
    - Si `hay_siguiente` es false o ya hay suficientes leads → terminar.
 5. Cerrar la pestaña (`tabs_close_mcp`).
 
@@ -89,8 +94,10 @@ de otro dominio va a `email_descartado` con el motivo y `email` queda vacío. Nu
 (APTO / PENDIENTE / NO APTO) según la misma regla. No modifica el original.
 
 ## Excel
-`python -m prospector excel --busqueda <etiqueta>` → `salida/prospectos_<etiqueta>.xlsx`
-(o sin `--busqueda` para la base completa → `salida/prospectos.xlsx`). Hojas: Prospectos, Resumen, Búsquedas.
+- Base completa (todos los segmentos): `python -m prospector excel` → `salida/base_contactos.xlsx`
+- Un segmento: `python -m prospector excel --segmento CEO` → `salida/base_contactos_CEO.xlsx`
+- Una búsqueda: `python -m prospector excel --busqueda <etiqueta>` → `salida/prospectos_<etiqueta>.xlsx`
+Hojas: Prospectos (con Segmento, Primera/Última vez visto), Resumen (por segmento y búsqueda), Búsquedas.
 
 ## Informe final al usuario
 Leads encontrados, con email (y cuántos `valid` / `accept_all`), no encontrados, avisos de LinkedIn si los hubo,

@@ -66,13 +66,13 @@ class TestAlmacen(unittest.TestCase):
         leads = []
         a = almacen.normalizar_lead({"id": "ACwAA1", "nombre": "Ana Martí", "cargo": "HR Director",
                                      "empresa": "Seat S.A."}, "rrhh")
-        n, _ = almacen.fusionar(leads, [a])
+        n, _, _ = almacen.fusionar(leads, [a])
         self.assertEqual(n, 1)
         self.assertEqual(leads[0]["url_linkedin"], "https://www.linkedin.com/in/ACwAA1")
         # mismo lead desde un perfil público: se fusiona por nombre+empresa y gana la URL personalizada
         b = almacen.normalizar_lead({"url": "https://www.linkedin.com/in/ana-marti/", "nombre": "Ana Martí",
                                      "empresa": "SEAT SA", "cargo": "Chief People Officer"}, "perfiles")
-        n, act = almacen.fusionar(leads, [b])
+        n, act, _ = almacen.fusionar(leads, [b])
         self.assertEqual((n, act, len(leads)), (0, 1, 1))
         self.assertEqual(leads[0]["url_linkedin"], "https://www.linkedin.com/in/ana-marti")
         self.assertEqual(leads[0]["cargo"], "Chief People Officer")
@@ -81,12 +81,46 @@ class TestAlmacen(unittest.TestCase):
     def test_descarta_miembro_anonimo(self):
         self.assertIsNone(almacen.normalizar_lead({"id": "x", "nombre": "LinkedIn Member"}, "b"))
 
-    def test_csv_ida_y_vuelta(self):
+    def test_base_sqlite_ida_y_vuelta(self):
         with tempfile.TemporaryDirectory() as d:
-            ruta = Path(d) / "leads.csv"
-            lead = almacen.normalizar_lead({"id": "1", "nombre": "Pep Solé", "cargo": "Dir; RRHH"}, "b")
-            almacen.guardar_leads([lead], ruta)
-            self.assertEqual(almacen.cargar_leads(ruta)[0]["cargo"], "Dir; RRHH")
+            db = Path(d) / "contactos.db"
+            lead = almacen.normalizar_lead({"id": "1", "nombre": "Pep Solé", "cargo": "Dir; RRHH"}, "rrhh-bcn")
+            almacen.guardar_leads([lead], db)
+            fila = almacen.cargar_leads(db)[0]
+            self.assertEqual((fila["cargo"], fila["segmentos"]), ("Dir; RRHH", "RRHH"))
+
+    def test_misma_persona_en_rrhh_y_ceo_no_se_duplica(self):
+        """Hoy RRHH, mañana CEOs: una sola ficha por persona con los dos segmentos y su email conservado."""
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "contactos.db"
+            leads = []
+            a = almacen.normalizar_lead({"id": "ACwAA7", "nombre": "Marta Ruiz", "cargo": "HR Director",
+                                         "empresa": "Acme"}, "rrhh-bcn-1000")
+            _, _, ids = almacen.fusionar(leads, [a])
+            leads[0]["email"] = "marta.ruiz@acme.com"
+            almacen.guardar_leads(leads, db)
+            almacen.registrar_apariciones(ids, "rrhh-bcn-1000", "RRHH", db)
+
+            leads = almacen.cargar_leads(db)
+            b = almacen.normalizar_lead({"id": "ACwAA7", "nombre": "Marta Ruiz", "cargo": "CEO",
+                                         "empresa": "Acme"}, "ceo-bcn")
+            nuevos, existian, ids = almacen.fusionar(leads, [b])
+            almacen.guardar_leads(leads, db)
+            almacen.registrar_apariciones(ids, "ceo-bcn", "CEO", db)
+
+            base = almacen.cargar_leads(db)
+            self.assertEqual((nuevos, existian, len(base)), (0, 1, 1))
+            self.assertEqual(base[0]["segmentos"], "RRHH | CEO")
+            self.assertEqual(base[0]["cargo"], "CEO")                      # dato actualizado
+            self.assertEqual(base[0]["email"], "marta.ruiz@acme.com")      # no se vuelve a pagar
+            from prospector.emails import pendientes
+            self.assertEqual(pendientes(base), [])
+            with almacen.closing(almacen.conectar(db)) as con:
+                self.assertEqual(con.execute("SELECT COUNT(*) FROM apariciones").fetchone()[0], 2)
+
+    def test_segmento_de_etiqueta(self):
+        self.assertEqual(almacen.segmento_de("rrhh-bcn-1000"), "RRHH")
+        self.assertEqual(almacen.segmento_de("ceo-madrid"), "CEO")
 
     def test_lote_txt_de_trozos(self):
         with tempfile.TemporaryDirectory() as d:
@@ -220,9 +254,11 @@ class TestExcel(unittest.TestCase):
             wb = load_workbook(ruta)
             self.assertEqual(wb.sheetnames, ["Prospectos", "Resumen", "Búsquedas"])
             ws = wb["Prospectos"]
-            self.assertEqual(ws["E2"].value, "ana@seat.es")
-            self.assertEqual(ws["G2"].value, 95)
-            self.assertEqual(ws["J2"].hyperlink.target, "https://www.linkedin.com/in/ACwAA1")
+            col = {c.value: c.column_letter for c in ws[1]}
+            self.assertEqual(ws[f"{col['Email']}2"].value, "ana@seat.es")
+            self.assertEqual(ws[f"{col['Score']}2"].value, 95)
+            self.assertEqual(ws[f"{col['Segmento']}2"].value, "RRHH")
+            self.assertEqual(ws[f"{col['LinkedIn']}2"].hyperlink.target, "https://www.linkedin.com/in/ACwAA1")
 
 
 if __name__ == "__main__":

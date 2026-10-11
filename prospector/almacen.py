@@ -1,7 +1,16 @@
-"""Base de leads en CSV (data/leads.csv), registro de búsquedas y caché de dominios."""
+"""Base de contactos única (SQLite: data/contactos.db) para TODAS las búsquedas y perfiles.
+
+- contactos   : una fila por persona (id = ID de LinkedIn). Nunca se duplica: si reaparece en otra
+                búsqueda se actualiza y se le añade la búsqueda/segmento.
+- busquedas   : historial de cada página/lote importado (segmento, etiqueta, URL, totales).
+- apariciones : en qué búsquedas ha salido cada persona y cuándo.
+Los segmentos (RRHH, CEO, ...) agrupan búsquedas: hoy RRHH, mañana CEOs, todo en la misma base.
+"""
 import csv
 import json
 import re
+import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -10,14 +19,14 @@ from .nombres import es_valido, normalizar, partir
 
 CAMPOS = [
     "id", "nombre", "nombre_pila", "apellidos", "cargo", "empresa", "empresa_id",
-    "ubicacion", "tiempo_puesto", "url_linkedin", "url_salesnav", "busqueda",
-    "fecha_alta", "dominio", "email", "email_score", "email_estado", "email_fuente",
+    "ubicacion", "tiempo_puesto", "url_linkedin", "url_salesnav", "segmentos", "busqueda",
+    "fecha_alta", "ultima_vez", "dominio", "email", "email_score", "email_estado", "email_fuente",
     "email_verificado", "resultado_email", "fecha_email", "validacion", "nota", "email_descartado",
 ]
-CAMPOS_BUSQUEDA = ["fecha", "busqueda", "origen", "url", "pagina", "total_resultados",
+CAMPOS_BUSQUEDA = ["fecha", "segmento", "busqueda", "origen", "url", "pagina", "total_resultados",
                    "leads_en_lote", "nuevos"]
 # Campos que se refrescan si llega un dato nuevo no vacío; el resto solo se rellena si está vacío.
-_REFRESCABLES = {"cargo", "empresa", "empresa_id", "ubicacion", "tiempo_puesto", "url_salesnav"}
+_REFRESCABLES = {"cargo", "empresa", "empresa_id", "ubicacion", "tiempo_puesto", "url_salesnav", "ultima_vez"}
 _SUFIJOS_EMPRESA = {"sa", "sl", "slu", "sau", "sll", "sociedad", "anonima", "limitada",
                     "inc", "ltd", "llc", "gmbh", "plc", "bv", "nv", "spa", "srl"}
 
@@ -26,7 +35,7 @@ def ahora() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
-# ---------- CSV genérico ----------
+# ---------- CSV (exportaciones y migración) ----------
 
 def _leer_csv(ruta: Path) -> list[dict]:
     if not ruta.exists():
@@ -49,14 +58,89 @@ def _escribir_csv(ruta: Path, filas: list[dict], campos: list[str]) -> None:
         raise SystemExit(f"No puedo escribir {ruta}: ¿está abierto en Excel? Ciérralo y repite.") from e
 
 
-# ---------- leads ----------
+# ---------- base SQLite ----------
 
-def cargar_leads(ruta: Path = config.LEADS_CSV) -> list[dict]:
-    return _leer_csv(ruta)
+def segmento_de(etiqueta: str) -> str:
+    """Convención de etiquetas <segmento>-<zona>-<...>: 'rrhh-bcn-1000' -> 'RRHH', 'ceo-madrid' -> 'CEO'."""
+    return (etiqueta or "").split("-")[0].strip().upper()
 
 
-def guardar_leads(leads: list[dict], ruta: Path = config.LEADS_CSV) -> None:
-    _escribir_csv(ruta, leads, CAMPOS)
+def _insert_busqueda_sql() -> str:
+    return (f"INSERT INTO busquedas ({', '.join(CAMPOS_BUSQUEDA)}) "
+            f"VALUES ({', '.join('?' * len(CAMPOS_BUSQUEDA))})")
+
+
+def conectar(db: Path | None = None) -> sqlite3.Connection:
+    db = db or config.DB
+    db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    columnas = ", ".join(f'"{c}" TEXT' for c in CAMPOS if c != "id")
+    columnas_b = ", ".join(f'"{c}" TEXT' for c in CAMPOS_BUSQUEDA)
+    con.executescript(f"""
+        CREATE TABLE IF NOT EXISTS contactos (id TEXT PRIMARY KEY, {columnas});
+        CREATE TABLE IF NOT EXISTS busquedas (n INTEGER PRIMARY KEY AUTOINCREMENT, {columnas_b});
+        CREATE TABLE IF NOT EXISTS apariciones (
+            contacto_id TEXT, busqueda TEXT, segmento TEXT, fecha TEXT,
+            PRIMARY KEY (contacto_id, busqueda));
+        CREATE INDEX IF NOT EXISTS ix_apar_seg ON apariciones(segmento);
+    """)
+    # columnas añadidas a CAMPOS en versiones posteriores
+    existentes = {r["name"] for r in con.execute("PRAGMA table_info(contactos)")}
+    for c in CAMPOS:
+        if c not in existentes:
+            con.execute(f'ALTER TABLE contactos ADD COLUMN "{c}" TEXT')
+    if db == config.DB:
+        _migrar_csv(con)
+    return con
+
+
+def _migrar_csv(con: sqlite3.Connection) -> None:
+    """Pasa la base antigua (data/leads.csv + busquedas.csv) a SQLite una sola vez."""
+    if not config.LEADS_CSV.exists() or con.execute("SELECT COUNT(*) FROM contactos").fetchone()[0]:
+        return
+    leads = _leer_csv(config.LEADS_CSV)
+    for l in leads:
+        etiquetas = [e for e in l.get("busqueda", "").split(" | ") if e]
+        l["segmentos"] = l.get("segmentos") or " | ".join(dict.fromkeys(segmento_de(e) for e in etiquetas))
+        l["ultima_vez"] = l.get("ultima_vez") or l.get("fecha_alta", "")
+    _upsert(con, leads)
+    for l in leads:
+        for e in [e for e in l.get("busqueda", "").split(" | ") if e]:
+            con.execute("INSERT OR IGNORE INTO apariciones VALUES (?,?,?,?)",
+                        (l["id"], e, segmento_de(e), l.get("fecha_alta", "")))
+    for b in _leer_csv(config.BUSQUEDAS_CSV):
+        b["segmento"] = b.get("segmento") or segmento_de(b.get("busqueda", ""))
+        con.execute(_insert_busqueda_sql(), [b.get(c, "") for c in CAMPOS_BUSQUEDA])
+    con.commit()
+    for ruta in (config.LEADS_CSV, config.BUSQUEDAS_CSV):
+        if ruta.exists():
+            ruta.replace(ruta.with_name(ruta.name + ".migrado"))
+
+
+def _upsert(con: sqlite3.Connection, leads: list[dict]) -> None:
+    cols = ", ".join(f'"{c}"' for c in CAMPOS)
+    con.executemany(f"INSERT OR REPLACE INTO contactos ({cols}) VALUES ({', '.join('?' * len(CAMPOS))})",
+                    [[str(l.get(c, "") or "") for c in CAMPOS] for l in leads])
+
+
+def cargar_leads(db: Path | None = None) -> list[dict]:
+    with closing(conectar(db)) as con:
+        return [{c: (r[c] or "") for c in CAMPOS}
+                for r in con.execute("SELECT * FROM contactos ORDER BY fecha_alta, rowid")]
+
+
+def guardar_leads(leads: list[dict], db: Path | None = None) -> None:
+    with closing(conectar(db)) as con:
+        _upsert(con, leads)
+        con.commit()
+
+
+def registrar_apariciones(ids: list[str], busqueda: str, segmento: str, db: Path | None = None) -> None:
+    with closing(conectar(db)) as con:
+        con.executemany("INSERT OR IGNORE INTO apariciones VALUES (?,?,?,?)",
+                        [(i, busqueda, segmento, ahora()) for i in ids])
+        con.commit()
 
 
 def norm_empresa(empresa: str) -> str:
@@ -79,7 +163,7 @@ def es_handle_publico(handle: str) -> bool:
     return bool(handle) and not handle.startswith("ACw")
 
 
-def normalizar_lead(bruto: dict, busqueda: str) -> dict | None:
+def normalizar_lead(bruto: dict, busqueda: str, segmento: str | None = None) -> dict | None:
     """Convierte un registro del extractor del navegador al formato de la base."""
     nombre = (bruto.get("nombre") or "").strip()
     if not es_valido(nombre):
@@ -106,18 +190,24 @@ def normalizar_lead(bruto: dict, busqueda: str) -> dict | None:
         "url_linkedin": url,
         "url_salesnav": (bruto.get("url_salesnav") or "").split("?")[0],
         "dominio": (bruto.get("dominio") or "").strip().lower(),
+        "segmentos": segmento if segmento is not None else segmento_de(busqueda),
         "busqueda": busqueda,
         "fecha_alta": ahora(),
+        "ultima_vez": ahora(),
         "validacion": (bruto.get("validacion") or "").strip(),
         "nota": (bruto.get("nota") or "").strip(),
     }
 
 
-def fusionar(leads: list[dict], nuevos: list[dict]) -> tuple[int, int]:
-    """Añade o actualiza leads (por id y, si no, por nombre+empresa). Devuelve (nuevos, actualizados)."""
+def fusionar(leads: list[dict], nuevos: list[dict]) -> tuple[int, int, list[str]]:
+    """Añade o actualiza contactos (por id y, si no, por nombre+empresa).
+
+    Devuelve (nuevos, ya_existían, id en la base de cada contacto del lote).
+    """
     por_id = {l["id"]: l for l in leads}
     por_persona = {_clave_persona(l): l for l in leads}
     n_nuevos = n_act = 0
+    ids: list[str] = []
     for nuevo in nuevos:
         existente = por_id.get(nuevo["id"]) or por_persona.get(_clave_persona(nuevo))
         if existente is None:
@@ -125,15 +215,17 @@ def fusionar(leads: list[dict], nuevos: list[dict]) -> tuple[int, int]:
             leads.append(fila)
             por_id[fila["id"]] = fila
             por_persona[_clave_persona(fila)] = fila
+            ids.append(fila["id"])
             n_nuevos += 1
             continue
+        ids.append(existente["id"])
         for campo, valor in nuevo.items():
             if campo in ("id", "fecha_alta") or not valor:
                 continue
-            if campo == "busqueda":
-                etiquetas = [e for e in existente.get("busqueda", "").split(" | ") if e]
+            if campo in ("busqueda", "segmentos"):
+                etiquetas = [e for e in existente.get(campo, "").split(" | ") if e]
                 if valor not in etiquetas:
-                    existente["busqueda"] = " | ".join(etiquetas + [valor])
+                    existente[campo] = " | ".join(etiquetas + [valor])
             elif campo == "url_linkedin":
                 # una URL personalizada /in/ana-perez gana a la de ID interno /in/ACwAA...
                 if es_handle_publico(handle_linkedin(valor)) or not existente.get(campo):
@@ -141,7 +233,7 @@ def fusionar(leads: list[dict], nuevos: list[dict]) -> tuple[int, int]:
             elif campo in _REFRESCABLES or not existente.get(campo):
                 existente[campo] = valor
         n_act += 1
-    return n_nuevos, n_act
+    return n_nuevos, n_act, ids
 
 
 CAMPOS_TROZO = ["id", "nombre", "cargo", "empresa", "empresa_id", "ubicacion", "tiempo_puesto"]
@@ -180,18 +272,23 @@ def leer_lote(ruta: Path) -> tuple[dict, list[dict]]:
 
 # ---------- búsquedas ----------
 
-def registrar_busqueda(meta: dict, busqueda: str, n_lote: int, n_nuevos: int) -> None:
-    filas = _leer_csv(config.BUSQUEDAS_CSV)
-    filas.append({
-        "fecha": ahora(), "busqueda": busqueda, "origen": meta.get("origen", ""),
-        "url": meta.get("url", ""), "pagina": meta.get("pagina", ""),
-        "total_resultados": meta.get("total", ""), "leads_en_lote": n_lote, "nuevos": n_nuevos,
-    })
-    _escribir_csv(config.BUSQUEDAS_CSV, filas, CAMPOS_BUSQUEDA)
+def registrar_busqueda(meta: dict, busqueda: str, n_lote: int, n_nuevos: int,
+                       segmento: str | None = None, db: Path | None = None) -> None:
+    fila = {
+        "fecha": ahora(), "segmento": segmento if segmento is not None else segmento_de(busqueda),
+        "busqueda": busqueda, "origen": meta.get("origen", ""), "url": meta.get("url", ""),
+        "pagina": meta.get("pagina", ""), "total_resultados": meta.get("total", ""),
+        "leads_en_lote": n_lote, "nuevos": n_nuevos,
+    }
+    with closing(conectar(db)) as con:
+        con.execute(_insert_busqueda_sql(), [str(fila[c]) for c in CAMPOS_BUSQUEDA])
+        con.commit()
 
 
-def cargar_busquedas() -> list[dict]:
-    return _leer_csv(config.BUSQUEDAS_CSV)
+def cargar_busquedas(db: Path | None = None) -> list[dict]:
+    with closing(conectar(db)) as con:
+        return [{c: (r[c] or "") for c in CAMPOS_BUSQUEDA}
+                for r in con.execute("SELECT * FROM busquedas ORDER BY n")]
 
 
 # ---------- dominios ----------

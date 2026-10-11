@@ -3,14 +3,6 @@ import os
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-DATA = RAIZ / "data"
-RAW = DATA / "raw"
-SALIDA = RAIZ / "salida"
-
-LEADS_CSV = DATA / "leads.csv"
-BUSQUEDAS_CSV = DATA / "busquedas.csv"
-DOMINIOS_JSON = DATA / "dominios.json"
-
 SEP = ";"            # separador CSV (Excel en español)
 ENCODING = "utf-8-sig"  # UTF-8 con BOM para que Excel lea bien las tildes
 
@@ -25,6 +17,18 @@ def cargar_env(ruta: Path = RAIZ / ".env") -> None:
             continue
         clave, valor = linea.split("=", 1)
         os.environ.setdefault(clave.strip(), valor.strip().strip('"').strip("'"))
+
+
+cargar_env()
+# PROSPECTOR_DATA en .env permite guardar la base fuera del proyecto (p. ej. en OneDrive, con copia).
+DATA = Path(os.environ.get("PROSPECTOR_DATA") or RAIZ / "data")
+RAW = DATA / "raw"
+SALIDA = RAIZ / "salida"
+
+DB = DATA / "contactos.db"               # base de contactos única (todas las búsquedas y segmentos)
+DOMINIOS_JSON = DATA / "dominios.json"
+LEADS_CSV = DATA / "leads.csv"           # formato antiguo: se migra a DB automáticamente
+BUSQUEDAS_CSV = DATA / "busquedas.csv"   # formato antiguo: se migra a DB automáticamente
 
 
 def hunter_api_key() -> str:

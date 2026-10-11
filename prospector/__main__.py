@@ -1,11 +1,12 @@
 """CLI: python -m prospector <comando>
 
-  importar  data/raw/lote.json [...] --busqueda ETIQUETA   añade leads del navegador a la base
+  importar  data/raw/lote.txt [...] --busqueda ETIQUETA [--segmento SEG]
+                                                           añade contactos a la base única (sin duplicar)
   emails    [--busqueda E] [--limite N] [--verificar]      busca emails (Hunter, luego Prospeo)
   verificar [--busqueda E] [--limite N]                    verifica emails ya encontrados
   sin-dominio [--busqueda E]                               empresas sin dominio conocido
   dominio   "Empresa" empresa.com                          fija el dominio de una empresa
-  excel     [--busqueda E] [--salida ruta.xlsx]            genera la hoja Excel
+  excel     [--segmento S | --busqueda E] [--salida x]     Excel de la base completa o de un segmento
   estado                                                   resumen de la base y créditos
   revisar                                                  marca emails cuyo dominio no es de la empresa actual
   auditar   lista.csv|xlsx [--salida ruta.xlsx]            audita una lista externa (copia, no toca el original)
@@ -24,25 +25,35 @@ from .hunter import ClaveInvalida, Hunter, HunterError, SinCreditos
 from .prospeo import Prospeo
 
 
-def _filtrar(leads, busqueda):
-    return [l for l in leads if not busqueda or busqueda in l.get("busqueda", "").split(" | ")]
+def _filtrar(leads, busqueda=None, segmento=None):
+    return [l for l in leads
+            if (not busqueda or busqueda in l.get("busqueda", "").split(" | "))
+            and (not segmento or segmento.upper() in l.get("segmentos", "").split(" | "))]
 
 
 def cmd_importar(a):
     leads = almacen.cargar_leads()
+    antes = {l["id"]: dict(l) for l in leads}
     total_nuevos = 0
     for ruta in a.archivos:
         meta, brutos = almacen.leer_lote(Path(ruta))
         etiqueta = a.busqueda or meta.get("busqueda") or Path(ruta).stem
-        lote = [n for b in brutos if (n := almacen.normalizar_lead(b, etiqueta))]
-        nuevos, act = almacen.fusionar(leads, lote)
-        almacen.registrar_busqueda(meta, etiqueta, len(lote), nuevos)
+        segmento = (a.segmento or almacen.segmento_de(etiqueta)).upper()
+        lote = [n for b in brutos if (n := almacen.normalizar_lead(b, etiqueta, segmento))]
+        nuevos, act, ids = almacen.fusionar(leads, lote)
+        almacen.registrar_busqueda(meta, etiqueta, len(lote), nuevos, segmento)
+        almacen.registrar_apariciones(ids, etiqueta, segmento)
         descartados = len(brutos) - len(lote)
-        print(f"{ruta}: {len(lote)} leads ({nuevos} nuevos, {act} ya existían"
-              + (f", {descartados} descartados sin nombre" if descartados else "") + ")")
+        print(f"{ruta} [{segmento}]: {len(lote)} contactos → {nuevos} nuevos, {act} ya estaban en la base"
+              + (f", {descartados} descartados sin nombre" if descartados else ""))
+        for i in ids:
+            if i in antes:  # ya conocido: de qué búsquedas venía y si ya tiene email (no se vuelve a pagar)
+                p = antes[i]
+                print(f"   ya en base: {p['nombre']} · {p['empresa']} · antes en {p['segmentos'] or p['busqueda']}"
+                      + (f" · email {p['email']}" if p.get("email") else ""))
         total_nuevos += nuevos
     almacen.guardar_leads(leads)
-    print(f"Base: {len(leads)} leads · +{total_nuevos} nuevos")
+    print(f"Base de contactos: {len(leads)} personas · +{total_nuevos} nuevas")
 
 
 def _proveedores(sin_prospeo: bool):
@@ -64,7 +75,8 @@ def _creditos_hunter(hunter: Hunter) -> str:
 
 def cmd_emails(a):
     leads = almacen.cargar_leads()
-    cola = pendientes(leads, a.busqueda, a.reintentar)
+    objetivo = _filtrar(leads, None, a.segmento)  # mismos dicts: guardar(leads) persiste los cambios
+    cola = pendientes(objetivo, a.busqueda, a.reintentar)
     if a.limite:
         cola = cola[: a.limite]
     if a.simular:
@@ -82,7 +94,7 @@ def cmd_emails(a):
     print(_creditos_hunter(hunter))
     print("Prospeo como respaldo: " + ("sí" if prospeo else "no (sin PROSPEO_API_KEY)"))
     try:
-        stats = enriquecer(leads, hunter=hunter, prospeo=prospeo, dominios=dominios,
+        stats = enriquecer(objetivo, hunter=hunter, prospeo=prospeo, dominios=dominios,
                            busqueda=a.busqueda, limite=a.limite, verificar=a.verificar,
                            reintentar=a.reintentar, max_encontrados=a.max_creditos,
                            guardar=lambda: almacen.guardar_leads(leads))
@@ -121,7 +133,7 @@ def cmd_sin_dominio(a):
     """Empresas de leads sin email válido cuyo dominio aún no está verificado en LinkedIn."""
     dominios = almacen.Dominios()
     vistas = {}
-    for l in sin_dominio_verificado(almacen.cargar_leads(), dominios, a.busqueda):
+    for l in sin_dominio_verificado(_filtrar(almacen.cargar_leads(), None, a.segmento), dominios, a.busqueda):
         vistas.setdefault(almacen.norm_empresa(l["empresa"]),
                           {"empresa": l["empresa"], "empresa_id": l.get("empresa_id", "")})
     print(json.dumps(list(vistas.values()), ensure_ascii=False, indent=1))
@@ -146,13 +158,22 @@ def cmd_dominio(a):
 
 
 def cmd_excel(a):
-    leads = _filtrar(almacen.cargar_leads(), a.busqueda)
-    ruta = Path(a.salida) if a.salida else config.SALIDA / (
-        f"prospectos_{a.busqueda}.xlsx" if a.busqueda else "prospectos.xlsx")
-    busquedas = [b for b in almacen.cargar_busquedas() if not a.busqueda or b.get("busqueda") == a.busqueda]
+    """Sin filtros: la base completa (salida/base_contactos.xlsx). Con --segmento o --busqueda: ese trozo."""
+    leads = _filtrar(almacen.cargar_leads(), a.busqueda, a.segmento)
+    if a.salida:
+        ruta = Path(a.salida)
+    elif a.busqueda:
+        ruta = config.SALIDA / f"prospectos_{a.busqueda}.xlsx"
+    elif a.segmento:
+        ruta = config.SALIDA / f"base_contactos_{a.segmento.upper()}.xlsx"
+    else:
+        ruta = config.SALIDA / "base_contactos.xlsx"
+    busquedas = [b for b in almacen.cargar_busquedas()
+                 if (not a.busqueda or b.get("busqueda") == a.busqueda)
+                 and (not a.segmento or b.get("segmento") == a.segmento.upper())]
     final = exportar(leads, busquedas, ruta)
     con_email = sum(1 for l in leads if l.get("email"))
-    print(f"Excel: {final} · {len(leads)} leads · {con_email} con email")
+    print(f"Excel: {final} · {len(leads)} contactos · {con_email} con email")
 
 
 def cmd_auditar(a):
@@ -184,10 +205,14 @@ def cmd_revisar(a):
 
 def cmd_estado(a):
     leads = almacen.cargar_leads()
-    print(f"Leads: {len(leads)} · con email: {sum(1 for l in leads if l.get('email'))}")
+    print(f"Base de contactos ({config.DB}): {len(leads)} personas · con email: {sum(1 for l in leads if l.get('email'))}")
+    por_s = Counter(s for l in leads for s in (l.get("segmentos") or "-").split(" | "))
+    for s, n in por_s.most_common():
+        con = sum(1 for l in leads if s in (l.get("segmentos") or "-").split(" | ") and l.get("email"))
+        print(f"  segmento {s}: {n} contactos · {con} con email")
     por_b = Counter(b for l in leads for b in (l.get("busqueda") or "-").split(" | "))
     for b, n in por_b.most_common():
-        print(f"  {b}: {n}")
+        print(f"    búsqueda {b}: {n}")
     print("Resultado email: " + ", ".join(
         f"{k or 'pendiente'}={v}" for k, v in Counter(l.get("resultado_email", "") for l in leads).most_common()))
     config.cargar_env()
@@ -210,6 +235,7 @@ def main(argv=None):
     s = sub.add_parser("importar")
     s.add_argument("archivos", nargs="+")
     s.add_argument("--busqueda")
+    s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
     s.set_defaults(f=cmd_importar)
 
     s = sub.add_parser("emails")
@@ -221,6 +247,7 @@ def main(argv=None):
                    help="parar al encontrar N emails (Hunter cobra 1 búsqueda por email encontrado)")
     s.add_argument("--sin-prospeo", action="store_true")
     s.add_argument("--simular", action="store_true", help="listar sin llamar a la API")
+    s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
     s.set_defaults(f=cmd_emails)
 
     s = sub.add_parser("verificar")
@@ -230,6 +257,7 @@ def main(argv=None):
 
     s = sub.add_parser("sin-dominio")
     s.add_argument("--busqueda")
+    s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
     s.set_defaults(f=cmd_sin_dominio)
 
     s = sub.add_parser("dominio")
@@ -240,6 +268,7 @@ def main(argv=None):
     s = sub.add_parser("excel")
     s.add_argument("--busqueda")
     s.add_argument("--salida")
+    s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
     s.set_defaults(f=cmd_excel)
 
     s = sub.add_parser("estado")

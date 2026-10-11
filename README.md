@@ -3,13 +3,14 @@
 ```
 Sales Navigator / perfiles ──(Claude in Chrome + extractores JS)──► data/raw/*.json
         │
-        ▼  python -m prospector importar
-   data/leads.csv  (base única, sin duplicados)
+        ▼  python -m prospector importar --busqueda <segmento>-<zona>
+   data/contactos.db  BASE DE CONTACTOS ÚNICA (todas las búsquedas y segmentos: RRHH, CEO...)
+                      una ficha por persona, con las búsquedas/segmentos en que ha aparecido
         │
         ▼  python -m prospector emails      Hunter.io (nombre + dominio/empresa)
         │                                   └─ si no encuentra: Prospeo (opcional)
         ▼  python -m prospector excel
-   salida/prospectos_<búsqueda>.xlsx   (Prospectos · Resumen · Búsquedas)
+   salida/base_contactos.xlsx  (o por segmento / por búsqueda)
 ```
 
 ## Puesta en marcha
@@ -32,12 +33,14 @@ Sales Navigator y pega la URL.
 ## Comandos del CLI
 | Comando | Qué hace |
 |---|---|
-| `importar data/raw/x.json --busqueda ETQ` | Añade leads a la base (fusiona duplicados por ID o nombre+empresa) |
+| `importar data/raw/x.txt --busqueda rrhh-bcn [--segmento RRHH]` | Añade contactos a la base única; los que ya estaban no se duplican (se les añade la búsqueda y el segmento) |
 | `emails --busqueda ETQ [--limite N] [--verificar] [--reintentar] [--simular]` | Busca emails |
 | `verificar --busqueda ETQ` | Verifica con Hunter los emails ya encontrados |
 | `sin-dominio --busqueda ETQ` | Empresas sin dominio conocido (para buscar su web en LinkedIn) |
 | `dominio "Empresa" empresa.com` | Fija el dominio de una empresa (mejora mucho los aciertos) |
-| `excel [--busqueda ETQ]` | Genera el Excel |
+| `excel [--segmento CEO] [--busqueda ETQ]` | Excel de la base completa, de un segmento o de una búsqueda |
+| `revisar` | Vuelve a aplicar la regla "email = empresa actual de LinkedIn" a toda la base |
+| `auditar lista.csv` | Audita una lista externa con la misma regla (no toca el original) |
 | `estado` | Resumen de la base y créditos de Hunter |
 
 ## Cómo se buscan los emails
@@ -57,3 +60,10 @@ Sales Navigator y pega la URL.
 - Visitar perfiles deja rastro; las páginas de resultados de Sales Navigator no.
 - **RGPD**: emails profesionales para prospección B2B suelen ampararse en el interés legítimo, pero hay que
   informar al contacto en el primer mensaje (art. 14: origen de los datos y cómo oponerse) y respetar las bajas.
+
+## Base de contactos
+- Una sola base para todo (`data/contactos.db`, SQLite). Cada persona es una ficha única por su ID de LinkedIn.
+- Si alguien sale en una búsqueda de RRHH y luego en otra de CEOs, sigue siendo una ficha: se actualizan
+  cargo y empresa, se añade el segmento y se conserva el email (no se vuelve a pagar en Hunter).
+- Para guardar la base fuera del proyecto (p. ej. en OneDrive, con copia de seguridad), en `.env`:
+  `PROSPECTOR_DATA=C:\Users\<usuario>\OneDrive\Prospeccion`

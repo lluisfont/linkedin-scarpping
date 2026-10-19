@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 
 from prospector import almacen
 from prospector.emails import buscar_email_lead, enriquecer
-from prospector.excel import exportar
+from prospector.excel import exportar, tamano_empresa
 from prospector.hunter import Hunter, SinCreditos
 from prospector.nombres import candidatos, es_incompleto, limpiar, partir
 from prospector.prospeo import Prospeo
@@ -259,6 +259,11 @@ class TestExcel(unittest.TestCase):
             self.assertEqual(ws[f"{col['Score']}2"].value, 95)
             self.assertEqual(ws[f"{col['Segmento']}2"].value, "RRHH")
             self.assertEqual(ws[f"{col['LinkedIn']}2"].hyperlink.target, "https://www.linkedin.com/in/ACwAA1")
+
+    def test_tamano_empresa(self):
+        self.assertEqual(tamano_empresa("rrhh-bcn-D"), "51-200 (puede ser <100)")
+        self.assertEqual(tamano_empresa("rrhh-bcn-I"), "10000+")
+        self.assertEqual(tamano_empresa("rrhh"), "")
 
 
 if __name__ == "__main__":

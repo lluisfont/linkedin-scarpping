@@ -10,7 +10,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 COLUMNAS = [  # (cabecera, campo, ancho)
     ("Nombre", "nombre", 26), ("Segmento", "segmentos", 12), ("Cargo", "cargo", 38), ("Empresa", "empresa", 28),
-    ("Ubicación", "ubicacion", 24), ("Email", "email", 34), ("Estado email", "email_estado", 13),
+    ("Tamaño empresa", "tamano_empresa", 22), ("Ubicación", "ubicacion", 24), ("Email", "email", 34), ("Estado email", "email_estado", 13),
     ("Score", "email_score", 8), ("Fuente email", "email_fuente", 11), ("Dominio", "dominio", 20),
     ("LinkedIn", "url_linkedin", 42), ("Sales Navigator", "url_salesnav", 20),
     ("Tiempo en puesto", "tiempo_puesto", 16), ("Búsqueda", "busqueda", 22),
@@ -24,6 +24,13 @@ COLORES_ESTADO = {
     "unknown": "EDEDED", "invalid": "FFC7CE", "disposable": "FFC7CE",
 }
 CABECERA = PatternFill("solid", fgColor="1F4E78")
+# Tramo de empleados según el sufijo de la búsqueda (filtro COMPANY_HEADCOUNT de Sales Navigator)
+TRAMOS = {"D": "51-200 (puede ser <100)", "E": "201-500", "F": "501-1000", "G": "1001-5000",
+          "H": "5001-10000", "I": "10000+", "201": "201+", "1000": "1000+"}
+
+
+def tamano_empresa(busqueda: str) -> str:
+    return TRAMOS.get((busqueda or "").rsplit("-", 1)[-1], "")
 
 
 def _hoja_tabla(ws, cabeceras: list[str], filas: list[list], nombre_tabla: str, anchos=None):
@@ -52,6 +59,7 @@ def exportar(leads: list[dict], busquedas: list[dict], ruta: Path) -> Path:
     ws.title = "Prospectos"
     filas = []
     for l in leads:
+        l = {**l, "tamano_empresa": tamano_empresa(l.get("busqueda", ""))}
         fila = [l.get(campo, "") for _, campo, _ in COLUMNAS]
         i_score = [c for _, c, _ in COLUMNAS].index("email_score")
         fila[i_score] = int(fila[i_score]) if str(fila[i_score]).isdigit() else None

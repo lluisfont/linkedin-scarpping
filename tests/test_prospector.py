@@ -78,6 +78,28 @@ class TestAlmacen(unittest.TestCase):
         self.assertEqual(leads[0]["cargo"], "Chief People Officer")
         self.assertEqual(leads[0]["busqueda"], "rrhh | perfiles")
 
+    def test_fusionar_otra_empresa(self):
+        def lead(empresa, eid, cargo="HR Director"):
+            return almacen.normalizar_lead({"id": "ACwAA9", "nombre": "Pau Roca", "cargo": cargo,
+                                            "empresa": empresa, "empresa_id": eid}, "rrhh-bcn-D")
+        # con email: se queda el puesto del email y se marca para revisar
+        leads = [lead("Affle", "66741")]
+        leads[0].update(email="pau.roca@affle.com", resultado_email="encontrado")
+        almacen.fusionar(leads, [lead("Jampp", "2483441", "Head of People")])
+        self.assertEqual((leads[0]["empresa"], leads[0]["cargo"]), ("Affle", "HR Director"))
+        self.assertEqual(leads[0]["validacion"], "Revisar")
+        self.assertIn("también figura en Jampp", leads[0]["nota"])
+        # sin email: pasa a la empresa nueva y se vuelve a buscar
+        leads = [lead("Affle", "66741")]
+        leads[0].update(resultado_email="no_encontrado", dominio="affle.com")
+        almacen.fusionar(leads, [lead("Jampp", "2483441")])
+        self.assertEqual((leads[0]["empresa"], leads[0]["resultado_email"], leads[0]["dominio"]), ("Jampp", "", ""))
+        # mismo ID de empresa con otro nombre visible: no es un cambio
+        leads = [lead("INDCRESA", "5367409")]
+        leads[0].update(email="a@indcresa.com")
+        almacen.fusionar(leads, [lead("INDCRESA / Cacao en polvo desde 1915", "5367409")])
+        self.assertEqual(leads[0]["validacion"], "")
+
     def test_descarta_miembro_anonimo(self):
         self.assertIsNone(almacen.normalizar_lead({"id": "x", "nombre": "LinkedIn Member"}, "b"))
 

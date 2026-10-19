@@ -16,9 +16,15 @@ PERFILES = {
             r"people|personas)\b",
             r"\b(chro|cpo|hrd|chief people officer|chief human resources officer|chief people & culture officer|"
             r"chief people and culture officer)\b",
+            # Máximo responsable de RRHH con otro título (habitual en empresas medianas)
+            r"\b(responsable|manager|gerente|jefe|jefa|cap)\s+(de\s+|del\s+|of\s+)?(rrhh|rr hh|recursos humanos|"
+            r"recursos humans|human resources|hr|personas|persones|personal|people|people & culture|"
+            r"people and culture)\b",
+            r"\b(hr|rrhh|human resources|people|people & culture|people and culture)\s+manager\b",
+            r"\b(director|directora)\s+(de\s+)?(recursos humans|persones)\b",
         ],
         # Cargo de RRHH en general (necesita además un término de dirección).
-        "area": r"\b(rrhh|recursos humanos|human resources|hr|people|personas|talent|talento|capital humano|"
+        "area": r"\b(rrhh|recursos humanos|recursos humans|persones|human resources|hr|people|personas|talent|talento|capital humano|"
                 r"human capital|organizacion y personas|people & culture|people and culture)\b",
         # Nunca son director de RRHH de su empresa.
         "duras": [

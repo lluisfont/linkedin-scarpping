@@ -199,6 +199,37 @@ def normalizar_lead(bruto: dict, busqueda: str, segmento: str | None = None) -> 
     }
 
 
+# Datos del puesto: con otra empresa no se mezclan con los del puesto que ya tiene email.
+_CAMPOS_PUESTO = {"cargo", "empresa", "empresa_id", "tiempo_puesto"}
+
+
+def _es_otra_empresa(antes: dict, ahora_: dict) -> bool:
+    """Manda el ID de empresa de LinkedIn (el nombre visible varía: 'X' / 'X / eslogan')."""
+    if antes.get("empresa_id") and ahora_.get("empresa_id"):
+        return str(antes["empresa_id"]) != str(ahora_["empresa_id"])
+    return bool(antes.get("empresa") and ahora_.get("empresa")
+                and norm_empresa(antes["empresa"]) != norm_empresa(ahora_["empresa"]))
+
+
+def _otra_empresa(existente: dict, nuevo: dict) -> set[str]:
+    """La búsqueda lo muestra en otra empresa (cambio de trabajo o varios puestos actuales).
+
+    Con email: se conserva el puesto del email y se marca para revisar (puede haberse ido).
+    Sin email: pasa a la empresa nueva y se vuelve a buscar su email ahí.
+    Devuelve los campos que no deben refrescarse.
+    """
+    if existente.get("email"):
+        aviso = f"Revisar: en LinkedIn también figura en {nuevo['empresa']}"
+        notas = [n for n in existente.get("nota", "").split(" | ") if n and n != aviso]
+        existente["nota"] = " | ".join(notas + [aviso])
+        if existente.get("validacion") != "Fuera de perfil":
+            existente["validacion"] = "Revisar"
+        return _CAMPOS_PUESTO
+    if existente.get("resultado_email") in ("no_encontrado", "descartado", "sin_empresa", "error"):
+        existente.update(resultado_email="", dominio="", fecha_email="")
+    return set()
+
+
 def fusionar(leads: list[dict], nuevos: list[dict]) -> tuple[int, int, list[str]]:
     """Añade o actualiza contactos (por id y, si no, por nombre+empresa).
 
@@ -219,8 +250,9 @@ def fusionar(leads: list[dict], nuevos: list[dict]) -> tuple[int, int, list[str]
             n_nuevos += 1
             continue
         ids.append(existente["id"])
+        fijos = _otra_empresa(existente, nuevo) if _es_otra_empresa(existente, nuevo) else set()
         for campo, valor in nuevo.items():
-            if campo in ("id", "fecha_alta") or not valor:
+            if campo in ("id", "fecha_alta") or campo in fijos or not valor:
                 continue
             if campo in ("busqueda", "segmentos"):
                 etiquetas = [e for e in existente.get(campo, "").split(" | ") if e]

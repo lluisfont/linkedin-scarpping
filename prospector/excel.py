@@ -31,7 +31,8 @@ TRAMOS = {"D": "51-200 (puede ser <100)", "E": "201-500", "F": "501-1000", "G": 
 
 def tamano_empresa(busqueda: str) -> str:
     """Si aparece en varias búsquedas manda el tramo concreto (E-I), luego 201+/1000+ y por último 51-200."""
-    sufijos = {b.strip().rsplit("-", 1)[-1] for b in (busqueda or "").split("|")}
+    # etiqueta = segmento-zona-tramo[-variante], p. ej. rrhh-bcn-E o rrhh-bcn-E-resp
+    sufijos = {p[2] for b in (busqueda or "").split("|") if len(p := b.strip().split("-")) > 2}
     return next((TRAMOS[s] for s in ("E", "F", "G", "H", "I", "201", "1000", "D") if s in sufijos), "")
 
 

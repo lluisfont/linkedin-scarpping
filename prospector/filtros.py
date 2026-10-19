@@ -23,6 +23,7 @@ PERFILES = {
         # Nunca son director de RRHH de su empresa.
         "duras": [
             r"\b(profesor|profesora|professor|tutor|teacher|docente|lecturer|mentor|(?<!internal )coach|"
+            r"academic|academico|academica|postgrado|riesgos|juridicas|compensation & benefits|"
             r"formador|formadora)\b",
             r"\b(consultant|consultor|consultora|advisor|asesor|asesora|freelance|headhunter|"
             r"recruiter|reclutador|reclutadora)\b",
@@ -34,14 +35,14 @@ PERFILES = {
         # Área seguida de una función concreta ("People Analytics", "HR Legal"): excluye siempre.
         "funcion_del_area": r"\b(hr|rrhh|people|personas|human resources|culture)\s+(analytics|legal|compliance|"
                             r"relations|data|systems|tech|technology|it|operations analytics|experience|"
-                            r"business partners?|bp|partners?|partnership|projects?|development|hris|intelligence|planning|generalists?|transformation)\b",
+                            r"business partners?|bp|partners?|partnership|projects?|development|hris|intelligence|planning|generalists?|transformation|services)\b",
         # Funciones concretas dentro de RRHH: excluyen salvo frase fuerte.
         "blandas": [
             r"\b(analytics|analyst|analista|payroll|nomina|nominas|legal|abogad[oa]|lawyer|total rewards|"
             r"compensation|compensacion|benefits|c&b|comp&ben|retribucion|learning|formacion|desarrollo|talent acquisition|talent adquisition|talent adquistion|adquisicion de talento|"
             r"talent management|gestion del talento|program management|programme management|project management|"
             r"employer branding|business partner|labour relations|relaciones laborales|"
-            r"administracion de personal|administracion de personas|seleccion|recruitment|hrbp|hris|programas|programs)\b",
+            r"administracion de personal|administracion de personas|seleccion|recruitment|hrbp|hris|programas?|programs?)\b",
         ],
     },
 }

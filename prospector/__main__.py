@@ -19,8 +19,10 @@ from collections import Counter
 from pathlib import Path
 
 from . import almacen, config
-from .emails import aplicar_regla, enriquecer, pendientes, sin_dominio_verificado, verificar_lead
+from .emails import (FUERA_DE_PERFIL, aplicar_regla, enriquecer, pendientes, sin_dominio_verificado,
+                     verificar_lead)
 from .excel import exportar
+from .filtros import PERFILES, en_zona, encaja
 from .hunter import ClaveInvalida, Hunter, HunterError, SinCreditos
 from .prospeo import Prospeo
 
@@ -40,10 +42,23 @@ def cmd_importar(a):
         etiqueta = a.busqueda or meta.get("busqueda") or Path(ruta).stem
         segmento = (a.segmento or almacen.segmento_de(etiqueta)).upper()
         lote = [n for b in brutos if (n := almacen.normalizar_lead(b, etiqueta, segmento))]
+        descartados = len(brutos) - len(lote)
+        perfil = None if a.sin_filtro else (a.perfil or (segmento.lower() if segmento.lower() in PERFILES else None))
+        if perfil:  # el filtro de cargo de Sales Navigator es laxo: solo entra quien encaja de verdad
+            zona = (etiqueta.split("-") + [""])[1]
+            fuera = [(l, motivo) for l in lote for ok, motivo in [encaja(l["cargo"], perfil)] if not ok]
+            fuera += [(l, f"ubicación fuera de la zona '{zona}': {l['ubicacion']}") for l in lote
+                      if not en_zona(l["ubicacion"], zona) and l not in [x for x, _ in fuera]]
+            if fuera:
+                ruta_ex = Path(ruta).with_name(Path(ruta).stem + "_excluidos.txt")
+                ruta_ex.write_text("\n".join(f"{l['nombre']} | {l['cargo']} | {l['empresa']} | {m}"
+                                             for l, m in fuera), encoding="utf-8")
+                print(f"   filtro {perfil.upper()}: {len(fuera)} excluidos por cargo o ubicación → {ruta_ex}")
+                ids_fuera = {l["id"] for l, _ in fuera}
+                lote = [l for l in lote if l["id"] not in ids_fuera]
         nuevos, act, ids = almacen.fusionar(leads, lote)
         almacen.registrar_busqueda(meta, etiqueta, len(lote), nuevos, segmento)
         almacen.registrar_apariciones(ids, etiqueta, segmento)
-        descartados = len(brutos) - len(lote)
         print(f"{ruta} [{segmento}]: {len(lote)} contactos → {nuevos} nuevos, {act} ya estaban en la base"
               + (f", {descartados} descartados sin nombre" if descartados else ""))
         for i in ids:
@@ -160,6 +175,8 @@ def cmd_dominio(a):
 def cmd_excel(a):
     """Sin filtros: la base completa (salida/base_contactos.xlsx). Con --segmento o --busqueda: ese trozo."""
     leads = _filtrar(almacen.cargar_leads(), a.busqueda, a.segmento)
+    if not a.todos:
+        leads = [l for l in leads if l.get("validacion") != FUERA_DE_PERFIL]
     if a.salida:
         ruta = Path(a.salida)
     elif a.busqueda:
@@ -203,6 +220,27 @@ def cmd_revisar(a):
     print(f"{stats['encontrado']} emails aceptados · {stats['descartado']} descartados")
 
 
+def cmd_filtrar(a):
+    """Marca 'Fuera de perfil' los contactos de la base cuyo cargo no encaja con el perfil del segmento."""
+    leads = almacen.cargar_leads()
+    n = 0
+    for l in _filtrar(leads, None, a.segmento):
+        perfiles = [s.lower() for s in l.get("segmentos", "").split(" | ") if s.lower() in PERFILES]
+        if not perfiles:
+            continue
+        motivos = [m for p in perfiles for ok, m in [encaja(l["cargo"], p)] if not ok]
+        if len(motivos) == len(perfiles):  # no encaja en ninguno de sus segmentos
+            if l.get("validacion") != FUERA_DE_PERFIL:
+                l["validacion"] = FUERA_DE_PERFIL
+                l["nota"] = " | ".join([x for x in [l.get("nota", "")] if x] + [f"Fuera de perfil: {motivos[0]}"])
+                n += 1
+                print(f"{l['nombre']} · {l['cargo']} → {motivos[0]}")
+        elif l.get("validacion") == FUERA_DE_PERFIL:
+            l["validacion"] = ""
+    almacen.guardar_leads(leads)
+    print(f"{n} contactos marcados Fuera de perfil")
+
+
 def cmd_estado(a):
     leads = almacen.cargar_leads()
     print(f"Base de contactos ({config.DB}): {len(leads)} personas · con email: {sum(1 for l in leads if l.get('email'))}")
@@ -235,6 +273,8 @@ def main(argv=None):
     s = sub.add_parser("importar")
     s.add_argument("archivos", nargs="+")
     s.add_argument("--busqueda")
+    s.add_argument("--perfil", help="filtro de cargo (rrhh); por defecto el del segmento si existe")
+    s.add_argument("--sin-filtro", action="store_true", help="importar sin filtrar por cargo")
     s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
     s.set_defaults(f=cmd_importar)
 
@@ -266,6 +306,7 @@ def main(argv=None):
     s.set_defaults(f=cmd_dominio)
 
     s = sub.add_parser("excel")
+    s.add_argument("--todos", action="store_true", help="incluir también los marcados Fuera de perfil")
     s.add_argument("--busqueda")
     s.add_argument("--salida")
     s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
@@ -281,6 +322,10 @@ def main(argv=None):
 
     s = sub.add_parser("revisar", help="repasa los emails de la base y marca los dudosos")
     s.set_defaults(f=cmd_revisar)
+
+    s = sub.add_parser("filtrar", help="marca Fuera de perfil los cargos que no encajan con su segmento")
+    s.add_argument("--segmento")
+    s.set_defaults(f=cmd_filtrar)
 
     a = p.parse_args(argv)
     a.f(a)

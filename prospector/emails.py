@@ -13,6 +13,8 @@ from .hunter import ClaveInvalida, EmailReclamado, Hunter, HunterError, SinCredi
 from .nombres import candidatos
 from .prospeo import Prospeo
 
+FUERA_DE_PERFIL = "Fuera de perfil"  # validacion de contactos cuyo cargo no encaja con su segmento
+
 # resultado_email que no se reintentan salvo con --reintentar
 FINALES = {"encontrado", "no_encontrado", "nombre_incompleto", "sin_empresa", "excluido_451", "descartado"}
 
@@ -92,7 +94,8 @@ def aplicar_regla(lead: dict, verificados: list[str] | None = None) -> str:
         lead["nota"] = " | ".join(notas + [f"Descartado: {motivo}"])
         return "descartado"
     aviso = motivo_revisar(lead)
-    lead["validacion"] = "Revisar" if aviso else ("" if lead.get("validacion") == "Revisar" else lead.get("validacion", ""))
+    if lead.get("validacion") != FUERA_DE_PERFIL:
+        lead["validacion"] = "Revisar" if aviso else ("" if lead.get("validacion") == "Revisar" else lead.get("validacion", ""))
     lead["nota"] = " | ".join(notas + ([aviso] if aviso else []))
     return "encontrado"
 
@@ -218,7 +221,7 @@ def pendientes(leads: list[dict], busqueda: str | None = None, reintentar: bool 
             continue
         if l.get("resultado_email") in FINALES and not reintentar:
             continue
-        if l.get("resultado_email") == "excluido_451":
+        if l.get("resultado_email") == "excluido_451" or l.get("validacion") == FUERA_DE_PERFIL:
             continue
         salida.append(l)
     return salida

@@ -264,6 +264,11 @@ class TestExcel(unittest.TestCase):
         self.assertEqual(tamano_empresa("rrhh-bcn-D"), "51-200 (puede ser <100)")
         self.assertEqual(tamano_empresa("rrhh-bcn-I"), "10000+")
         self.assertEqual(tamano_empresa("rrhh"), "")
+        self.assertEqual(tamano_empresa("rrhh-bcn-201 | rrhh-bcn-E | rrhh-bcn-D"), "201-500")
+        self.assertEqual(tamano_empresa("rrhh-bcn-201 | rrhh-bcn-D"), "201+")
+
+    def test_limpiar_abreviatura_maria(self):
+        self.assertEqual(limpiar("Mª Luisa Gambús Sáiz"), "María Luisa Gambús Sáiz")
 
 
 if __name__ == "__main__":

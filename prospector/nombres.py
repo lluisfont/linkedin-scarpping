@@ -36,6 +36,8 @@ def normalizar(texto: str) -> str:
 def limpiar(nombre: str) -> str:
     """Quita emojis, títulos, paréntesis y coletillas: 'Ana Pérez, MBA 🚀' -> 'Ana Pérez'."""
     s = re.sub(r"\(.*?\)|\[.*?\]", " ", nombre or "")
+    s = re.sub(r"\bM[ªa]\.?(?=\s)", "María", s)  # 'Mª José' -> 'María José' (Hunter rechaza 'Mª')
+    s = s.replace("ª", "").replace("º", "")
     s = s.split(",")[0]
     s = re.split(r"\s[|·–—/-]\s", s)[0]
     s = "".join(c if (c.isalpha() or c in " .'-") else " " for c in s)

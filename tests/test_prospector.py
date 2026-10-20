@@ -9,6 +9,7 @@ from openpyxl import load_workbook
 from prospector import almacen
 from prospector.emails import buscar_email_lead, enriquecer
 from prospector.excel import exportar, tamano_empresa
+from prospector.filtros import encaja
 from prospector.hunter import Hunter, SinCreditos
 from prospector.nombres import candidatos, es_incompleto, limpiar, partir
 from prospector.prospeo import Prospeo
@@ -288,9 +289,20 @@ class TestExcel(unittest.TestCase):
         self.assertEqual(tamano_empresa("rrhh"), "")
         self.assertEqual(tamano_empresa("rrhh-bcn-201 | rrhh-bcn-E | rrhh-bcn-D"), "201-500")
         self.assertEqual(tamano_empresa("rrhh-bcn-201 | rrhh-bcn-D"), "201+")
+        self.assertEqual(tamano_empresa("rrhh-tgn-5000"), "5001+")
 
     def test_limpiar_abreviatura_maria(self):
         self.assertEqual(limpiar("Mª Luisa Gambús Sáiz"), "María Luisa Gambús Sáiz")
+
+
+class TestFiltroRRHH(unittest.TestCase):
+    def test_cargos_combinados_y_departamento(self):
+        for cargo in ("HR & Legal Director", "Human Resources & PRL Manager", "Cap del Departament de Recursos Humans",
+                      "Responsable de Recursos Humanos", "HR Manager"):
+            self.assertTrue(encaja(cargo, "rrhh")[0], cargo)
+        for cargo in ("Senior HR & Recruiting Manager", "HR & Payroll Manager", "HR Business Partner",
+                      "Profesora de RRHH", "Responsable de Desarrollo de RRHH"):
+            self.assertFalse(encaja(cargo, "rrhh")[0], cargo)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,12 @@ PERFILES = {
             r"people and culture)\b",
             r"\b(hr|rrhh|human resources|people|people & culture|people and culture)\s+manager\b",
             r"\b(director|directora)\s+(de\s+)?(recursos humans|persones)\b",
+            # RRHH junto con otra área en empresas medianas: "HR & Legal Director", "HR & Facility Manager"
+            r"\b(hr|rrhh|human resources)\s*(&|and|y|i)\s*(?!recruit|talent|payroll|nomina|seleccion)[a-z]+"
+            r"(\s+[a-z]+)?\s+(manager|director|directora)\b",
+            r"\b(responsable|jefe|jefa|cap|director|directora)\s+(del?\s+)?(departament|departamento|area)\s+"
+            r"(de\s+)?(rrhh|recursos humanos|recursos humans|personas|persones|personal|gestion de personas|"
+            r"gestio de persones)\b",
         ],
         # Cargo de RRHH en general (necesita además un término de dirección).
         "area": r"\b(rrhh|recursos humanos|recursos humans|persones|human resources|hr|people|personas|talent|talento|capital humano|"
@@ -58,6 +64,9 @@ _DIRECCION = (r"\b(director|directora|dir|head|jefe|jefa|chief|vp|vice ?presiden
 
 ZONAS = {  # ubicación aceptada por zona de búsqueda ('' = sin ubicación visible, se acepta)
     "bcn": r"barcelona|catalu|catalonia|cataluna|spain|espana",
+    "tgn": r"tarragona|catalu|catalonia|cataluna|spain|espana",
+    "lld": r"lleida|lerida|catalu|catalonia|cataluna|spain|espana",
+    "gir": r"girona|gerona|catalu|catalonia|cataluna|spain|espana",
 }
 
 

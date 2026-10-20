@@ -6,7 +6,7 @@
   verificar [--busqueda E] [--limite N]                    verifica emails ya encontrados
   sin-dominio [--busqueda E]                               empresas sin dominio conocido
   dominio   "Empresa" empresa.com                          fija el dominio de una empresa
-  excel     [--segmento S | --busqueda E] [--salida x]     Excel de la base completa o de un segmento
+  excel     [--segmento S | --busqueda E] [--zona z1,z2] [--salida x]   Excel de la base o de un trozo
   estado                                                   resumen de la base y créditos
   revisar                                                  marca emails cuyo dominio no es de la empresa actual
   auditar   lista.csv|xlsx [--salida ruta.xlsx]            audita una lista externa (copia, no toca el original)
@@ -27,10 +27,16 @@ from .hunter import ClaveInvalida, Hunter, HunterError, SinCreditos
 from .prospeo import Prospeo
 
 
-def _filtrar(leads, busqueda=None, segmento=None):
+def _zona(etiqueta: str) -> str:
+    """'rrhh-tgn-E' -> 'tgn' (convención <segmento>-<zona>-<...>)."""
+    return (etiqueta.strip().split("-") + ["", ""])[1]
+
+
+def _filtrar(leads, busqueda=None, segmento=None, zonas=None):
     return [l for l in leads
             if (not busqueda or busqueda in l.get("busqueda", "").split(" | "))
-            and (not segmento or segmento.upper() in l.get("segmentos", "").split(" | "))]
+            and (not segmento or segmento.upper() in l.get("segmentos", "").split(" | "))
+            and (not zonas or any(_zona(b) in zonas for b in l.get("busqueda", "").split(" | ")))]
 
 
 def cmd_importar(a):
@@ -174,20 +180,24 @@ def cmd_dominio(a):
 
 def cmd_excel(a):
     """Sin filtros: la base completa (salida/base_contactos.xlsx). Con --segmento o --busqueda: ese trozo."""
-    leads = _filtrar(almacen.cargar_leads(), a.busqueda, a.segmento)
+    zonas = [z.strip() for z in a.zona.split(",") if z.strip()] if a.zona else None
+    leads = _filtrar(almacen.cargar_leads(), a.busqueda, a.segmento, zonas)
     if not a.todos:
         leads = [l for l in leads if l.get("validacion") != FUERA_DE_PERFIL]
     if a.salida:
         ruta = Path(a.salida)
     elif a.busqueda:
         ruta = config.SALIDA / f"prospectos_{a.busqueda}.xlsx"
+    elif zonas:
+        ruta = config.SALIDA / f"base_contactos_{(a.segmento or 'todos').upper()}_{'-'.join(zonas)}.xlsx"
     elif a.segmento:
         ruta = config.SALIDA / f"base_contactos_{a.segmento.upper()}.xlsx"
     else:
         ruta = config.SALIDA / "base_contactos.xlsx"
     busquedas = [b for b in almacen.cargar_busquedas()
                  if (not a.busqueda or b.get("busqueda") == a.busqueda)
-                 and (not a.segmento or b.get("segmento") == a.segmento.upper())]
+                 and (not a.segmento or b.get("segmento") == a.segmento.upper())
+                 and (not zonas or _zona(b.get("busqueda", "")) in zonas)]
     final = exportar(leads, busquedas, ruta)
     con_email = sum(1 for l in leads if l.get("email"))
     print(f"Excel: {final} · {len(leads)} contactos · {con_email} con email")
@@ -310,6 +320,7 @@ def main(argv=None):
     s.add_argument("--busqueda")
     s.add_argument("--salida")
     s.add_argument("--segmento", help="RRHH, CEO... (por defecto, el prefijo de la etiqueta)")
+    s.add_argument("--zona", help="zonas de las etiquetas separadas por comas, p. ej. tgn,lld,gir")
     s.set_defaults(f=cmd_excel)
 
     s = sub.add_parser("estado")

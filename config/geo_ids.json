@@ -1,4 +1,35 @@
 {
-  "_nota": "Ids de región de Sales Navigator ya resueltos. Formato: \"Zona\": {\"id\": \"NNN\", \"text\": \"texto exacto del filtro\"}",
-  "Barcelona": {"id": "107025191", "text": "Barcelona, Catalonia, Spain"}
+ "_nota": "Ids de región de Sales Navigator ya resueltos. Formato: \"Zona\": {\"id\": \"NNN\", \"text\": \"texto exacto del filtro\"}",
+ "Barcelona": {
+  "id": "107025191",
+  "text": "Barcelona, Catalonia, Spain"
+ },
+ "Tarragona (provincia)": {
+  "id": "104443126",
+  "text": "Province of Tarragona, Catalonia, Spain"
+ },
+ "Tarragona": {
+  "id": "106450022",
+  "text": "Tarragona, Catalonia, Spain"
+ },
+ "Gran Tarragona": {
+  "id": "90009812",
+  "text": "Greater Tarragona Area"
+ },
+ "Lleida": {
+  "id": "102186425",
+  "text": "Lleida, Catalonia, Spain"
+ },
+ "Gran Lleida": {
+  "id": "90009787",
+  "text": "Greater Lerida Area"
+ },
+ "Girona": {
+  "id": "103809869",
+  "text": "Girona, Catalonia, Spain"
+ },
+ "Gran Girona": {
+  "id": "90009777",
+  "text": "Greater Girona Area"
+ }
 }
